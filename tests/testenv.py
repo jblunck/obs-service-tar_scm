@@ -23,7 +23,7 @@ class TestEnvironment:
 
     @classmethod
     def tar_scm_bin(cls):
-        tar_scm = os.path.join(cls.tests_dir, '..', 'tar_scm')
+        tar_scm = os.path.join(cls.tests_dir, '..', 'tar_scm.py')
         if not os.path.isfile(tar_scm):
             raise RuntimeError, "Failed to find tar_scm executable at " + tar_scm
         return tar_scm
@@ -139,7 +139,7 @@ class TestEnvironment:
         mkfreshdir(self.outdir)
         cmdargs = args + [ '--outdir', self.outdir ]
         quotedargs = [ "'%s'" % arg for arg in cmdargs ]
-        cmdstr = 'bash %s %s 2>&1' % (self.tar_scm_bin(), " ".join(quotedargs))
+        cmdstr = 'python %s %s 2>&1' % (self.tar_scm_bin(), " ".join(quotedargs))
         print
         print ">>>>>>>>>>>"
         print "Running", cmdstr
