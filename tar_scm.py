@@ -133,7 +133,10 @@ def create_tar(repodir, outdir, dstname, extension='tar',
         incl_patterns.append(re.compile(fnmatch.translate(i)))
 
     # skip vcs files base on this pattern
+    excl_patterns.append(re.compile(r".*/\.bzr.*"))
     excl_patterns.append(re.compile(r".*/\.git.*"))
+    excl_patterns.append(re.compile(r".*/\.hg.*"))
+    excl_patterns.append(re.compile(r".*/\.svn.*"))
 
     for e in exclude:
         excl_patterns.append(re.compile(fnmatch.translate(e)))
@@ -175,6 +178,110 @@ def cleanup(dirs):
                 os.rmdir(os.path.join(root, name))
         os.rmdir(d)
 
+def version_iso_cleanup(version):
+
+    re.sub('([0-9]{4})-([0-9]{2})-([0-9]{2}) +([0-9]{2})([:]([0-9]{2})([:]([0-9]{2}))?)?( +[-+][0-9]{3,4})', '\1\2\3T\4\6\8', version)
+    re.sub('[-:]', '', version)
+    return version
+
+def detect_version_git(repodir, versionformat):
+
+    if versionformat is None:
+        versionformat = '%ct'
+
+    if re.match('.*@PARENT_TAG@.*', versionformat):
+        cmd = [ 'git', 'describe', '--tags', '--abbrev=0' ]
+        proc = subprocess.Popen(cmd,
+                                shell=False,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT,
+                                cwd=repodir)
+        proc.wait()
+        if proc.returncode != 0:
+            sys.exit('\e[0;31mThe git repository has no tags, thus @PARENT_TAG@ can not be expanded\e[0m')
+
+        re.sub('@PARENT_TAG@', proc.stdout.read().strip(), versionformat)
+
+    cmd = [ 'git', 'log', '-n1', '--date=short',
+            "--pretty=format:%s" % versionformat ]
+    proc = subprocess.Popen(cmd,
+                            shell=False,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            cwd=repodir)
+    proc.wait()
+    return version_iso_cleanup(proc.stdout.read().strip())
+
+def detect_version_svn(repodir, versionformat):
+
+    if versionformat is None:
+        versionformat = '%r'
+
+    cmd = [ 'svn', 'info' ]
+    proc = subprocess.Popen(cmd,
+                            shell=False,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            cwd=repodir)
+    proc.wait()
+    version = ''
+    m = re.search('Last Changed Rev: (.*)', proc.stdout.read(), re.MULTILINE)
+    if m:
+        version = m.group(1).strip()
+    return re.sub('%r', version, versionformat)
+
+def detect_version_hg(repodir, versionformat):
+
+    if versionformat is None:
+        versionformat = '{rev}'
+
+    cmd = [ 'hg', 'id', '-n',  ]
+    proc = subprocess.Popen(cmd,
+                            shell=False,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            cwd=repodir)
+    proc.wait()
+    version = proc.stdout.read().strip()
+
+    cmd = [ 'hg', 'log', '-l1', "-r%s" % version, '--template', versionformat ]
+    proc = subprocess.Popen(cmd,
+                            shell=False,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            cwd=repodir)
+    proc.wait()
+    return version_iso_cleanup(proc.stdout.read().strip())
+
+def detect_version_bzr(repodir, versionformat):
+
+    if versionformat is None:
+        versionformat = '%r'
+
+    cmd = [ 'bzr', 'revno' ]
+    proc = subprocess.Popen(cmd,
+                            shell=False,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            cwd=repodir)
+    proc.wait()
+    version = proc.stdout.read().strip()
+    return re.sub('%r', version, versionformat)
+
+def detect_version(scm, repodir, versionformat=None):
+
+    detect_version_commands = {
+        'git': detect_version_git,
+        'svn': detect_version_svn,
+        'hg':  detect_version_hg,
+        'bzr': detect_version_bzr,
+    }
+
+    version = detect_version_commands[scm](repodir, versionformat)
+    print "VERSION(auto): %s" % version
+    return version
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Git Tarballs')
     parser.add_argument('--scm', required=True,
@@ -185,6 +292,8 @@ if __name__ == '__main__':
                         help='osc service parameter that does nothing')
     parser.add_argument('--version', default='_auto_',
                         help='Specify version to be used in tarball. Defaults to automatically detected value formatted by versionformat parameter.')
+    parser.add_argument('--versionformat',
+                        help='Auto-generate version from checked out source using this format string.  This parameter is used if the \'version\' parameter is not specified.')
     parser.add_argument('--filename',
                         help='name of package - used together with version to determine tarball name')
     parser.add_argument('--extension', default='tar',
@@ -198,11 +307,16 @@ if __name__ == '__main__':
                        help='for specifying subset of files/subdirectories to pack in the tar ball')
     group.add_argument('--exclude', action='append', default=[],
                        help='for specifying excludes when creating the tar ball')
+    parser.add_argument('--history-depth',
+                        help='osc service parameter that does nothing')
     args = parser.parse_args()
 
     # basic argument validation
     if not os.path.isdir(args.outdir):
         sys.exit("%s: No such directory" % args.outdir);
+
+    if args.history_depth:
+        print "history-depth parameter is obsolete and will be ignored"
 
     # force cleaning of our workspace on exit
     atexit.register(cleanup, cleanup_dirs)
@@ -215,18 +329,21 @@ if __name__ == '__main__':
 
     clone_dir = fetch_upstream(args.scm, args.url, args.revision, repodir)
 
-    # detect_version
-    # detect_changes
 
     if args.filename:
         dstname=args.filename
     else:
         dstname=os.path.basename(clone_dir)
 
-    if args.version:
-        dstname=dstname + '-' + args.version
+    version = args.version
+    if version == '_auto_':
+        version = detect_version(args.scm, clone_dir, args.versionformat)
+    if version:
+        dstname=dstname + '-' + version
 
     print "DST: %s" % dstname
+
+    # detect_changes
 
     tar_dir = prep_tree_for_tar(clone_dir, args.subdir, args.outdir,
                                 dstname=dstname)
