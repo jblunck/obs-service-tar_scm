@@ -14,24 +14,27 @@ import hashlib
 import tempfile
 
 def fetch_upstream_git(url, clone_dir, revision):
-    command = ['git', 'clone', url, clone_dir]
-    return command
+    commands = [
+        ['git', 'clone', url, clone_dir],
+        ['git', 'submodule', 'update', '--init', '--recursive'],
+    ]
+    return commands
 
 def fetch_upstream_svn(url, clone_dir, revision):
-    command = ['svn', 'checkout', '--non-interactive', url, clone_dir]
+    command = [ ['svn', 'checkout', '--non-interactive', url, clone_dir] ]
     if revision:
-        command.insert(4, '-r%s' % revision)
+        command[0].insert(4, '-r%s' % revision)
     return command
 
 def fetch_upstream_hg(url, clone_dir, revision):
-    command = ['hg', 'clone', url, clone_dir]
+    command = [ ['hg', 'clone', url, clone_dir] ]
     return command
 
 def fetch_upstream_bzr(url, clone_dir, revision):
-    command = ['bzr', 'checkout', url, clone_dir]
+    command = [ ['bzr', 'checkout', url, clone_dir] ]
     if revision:
-        command.insert(3, '-r')
-        command.insert(4, revision)
+        command[0].insert(3, '-r')
+        command[0].insert(4, revision)
     return command
 
 fetch_upstream_commands = {
@@ -83,6 +86,9 @@ def switch_revision_git(clone_dir, revision):
     else:
         sys.exit('%s: No such revision' % revision)
 
+    subprocess.call(['git', 'submodule', 'update', '--recursive'],
+                    shell=False, cwd=clone_dir)
+
 
 def switch_revision_hg(clone_dir, revision):
 
@@ -102,7 +108,7 @@ def switch_revision_none(clone_dir, revision):
 switch_revision_commands = {
     'git': switch_revision_git,
     'svn': switch_revision_none,
-    'hg': switch_revision_hg,
+    'hg':  switch_revision_hg,
     'bzr': switch_revision_none,
 }
 
@@ -115,15 +121,24 @@ def fetch_upstream(scm, url, revision, out_dir):
         # initial clone
         os.mkdir(clone_dir)
 
-        cmd = fetch_upstream_commands[scm](url, clone_dir, revision)
-        print 'COMMAND: %s' % cmd
-        proc = subprocess.Popen(cmd,
+        cmds = fetch_upstream_commands[scm](url, clone_dir, revision)
+        print "CMD: %s" % cmds[0]
+        proc = subprocess.Popen(cmds[0],
                                 shell=False,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT,
                                 cwd=out_dir)
         proc.wait()
-        print 'STDOUT: %s' % proc.stdout.read()
+        cmds.pop(0)
+        for cmd in cmds:
+            print "CMD: %s" % cmd
+            proc = subprocess.Popen(cmd,
+                                    shell=False,
+                                    stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT,
+                                    cwd=clone_dir)
+            proc.wait()
+
     else:
         print "Detected cached repository..."
 
@@ -225,8 +240,8 @@ def cleanup(dirs):
 
 def version_iso_cleanup(version):
 
-    re.sub('([0-9]{4})-([0-9]{2})-([0-9]{2}) +([0-9]{2})([:]([0-9]{2})([:]([0-9]{2}))?)?( +[-+][0-9]{3,4})', '\1\2\3T\4\6\8', version)
-    re.sub('[-:]', '', version)
+    version = re.sub(r'([0-9]{4})-([0-9]{2})-([0-9]{2}) +([0-9]{2})([:]([0-9]{2})([:]([0-9]{2}))?)?( +[-+][0-9]{3,4})', r'\1\2\3T\4\6\8', version)
+    version = re.sub(r'[-:]', '', version)
     return version
 
 def detect_version_git(repodir, versionformat):
@@ -245,7 +260,7 @@ def detect_version_git(repodir, versionformat):
         if proc.returncode != 0:
             sys.exit('\e[0;31mThe git repository has no tags, thus @PARENT_TAG@ can not be expanded\e[0m')
 
-        re.sub('@PARENT_TAG@', proc.stdout.read().strip(), versionformat)
+        versionformat = re.sub('@PARENT_TAG@', proc.stdout.read().strip(), versionformat)
 
     cmd = [ 'git', 'log', '-n1', '--date=short',
             "--pretty=format:%s" % versionformat ]
@@ -360,6 +375,8 @@ if __name__ == '__main__':
     group.add_argument('--exclude', action='append', default=[],
                        help='for specifying excludes when creating the tar ball')
     parser.add_argument('--history-depth',
+                        help='osc service parameter that does nothing')
+    parser.add_argument('--submodules',
                         help='osc service parameter that does nothing')
     args = parser.parse_args()
 
