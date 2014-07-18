@@ -3,12 +3,15 @@
 import argparse
 import datetime
 import os
+import shutil
 import re
 import fnmatch
 import sys
 import tarfile
 import subprocess
 import atexit
+import hashlib
+import tempfile
 
 def fetch_upstream_git(url, clone_dir, revision):
     command = ['git', 'clone', url, clone_dir]
@@ -37,6 +40,28 @@ fetch_upstream_commands = {
     'hg': fetch_upstream_hg,
     'bzr': fetch_upstream_bzr,
 }
+
+def update_cache_bzr(url, clone_dir, revision):
+    command = ['bzr', 'update']
+    if revision:
+        command.insert(3, '-r')
+        command.insert(4, revision)
+    return command
+
+def update_cache_git(url, clone_dir, revision):
+    command = ['git', 'fetch']
+    return command
+
+def update_cache_hg(url, clone_dir, revision):
+    command = ['hg', 'pull']
+    return command
+
+def update_cache_svn(url, clone_dir, revision):
+    command = ['svn', 'update']
+    if revision:
+        command.insert(3, "-r%s" % revision)
+    return command
+
 
 def switch_revision_git(clone_dir, revision):
 
@@ -85,20 +110,40 @@ def fetch_upstream(scm, url, revision, out_dir):
     # calc_dir_to_clone_to
     basename = os.path.basename(re.sub(r'/.git$', '', url))
     clone_dir = os.path.abspath(os.path.join(out_dir, basename))
+
     if not os.path.isdir(clone_dir):
+        # initial clone
         os.mkdir(clone_dir)
 
-    # initial_clone
-    cmd = fetch_upstream_commands[scm](url, clone_dir, revision)
-    print 'COMMAND: %s' % cmd
-    proc = subprocess.Popen(cmd,
-                            shell=False,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            cwd=out_dir)
-    proc.wait()
+        cmd = fetch_upstream_commands[scm](url, clone_dir, revision)
+        print 'COMMAND: %s' % cmd
+        proc = subprocess.Popen(cmd,
+                                shell=False,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT,
+                                cwd=out_dir)
+        proc.wait()
+        print 'STDOUT: %s' % proc.stdout.read()
+    else:
+        print "Detected cached repository..."
 
-    print 'STDOUT: %s' % proc.stdout.read()
+        update_cache_commands = {
+            'git': update_cache_git,
+            'svn': update_cache_svn,
+            'hg':  update_cache_hg,
+            'bzr': update_cache_bzr,
+        }
+
+        cmd = update_cache_commands[scm](url, clone_dir, revision)
+        print 'COMMAND: %s' % cmd
+        proc = subprocess.Popen(cmd,
+                                shell=False,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT,
+                                cwd=clone_dir)
+        proc.wait()
+        print 'STDOUT: %s' % proc.stdout.read()
+
 
     # switch_to_revision
     switch_revision_commands[scm](clone_dir, revision)
@@ -115,7 +160,7 @@ def prep_tree_for_tar(repodir, subdir, outdir, dstname):
     if os.path.exists(dst) and ( os.path.samefile(src, dst) or os.path.samefile(os.path.dirname(src), dst) ):
         sys.exit("%s: src and dst refer to same file" % src)
 
-    os.rename(src, dst)
+    shutil.copytree(src, dst)
 
     return dst
 
@@ -281,6 +326,13 @@ def detect_version(scm, repodir, versionformat=None):
     print "VERSION(auto): %s" % version
     return version
 
+def get_repocache_hash(scm, url, subdir):
+
+    m = hashlib.sha256()
+    m.update(url)
+    if scm == 'svn':
+        m.update('/' + subdir)
+    return m.hexdigest()
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Git Tarballs')
@@ -321,14 +373,27 @@ if __name__ == '__main__':
     # force cleaning of our workspace on exit
     atexit.register(cleanup, cleanup_dirs)
 
+    # check for enabled caches
+    repocachedir = os.getenv('CACHEDIRECTORY')
 
-    repodir = os.path.join(args.outdir, '.tmp')
-    if not os.path.isdir(repodir):
-        os.mkdir(repodir)
+    # construct repodir (the parent directory of the checkout)
+    repodir = None
+    if repocachedir and os.path.isdir(os.path.join(repocachedir, 'repo')):
+        repohash = get_repocache_hash(args.scm, args.url, args.subdir)
+        print "HASH: %s" % repohash
+        repodir = os.path.join(repocachedir, 'repo')
+        repodir = os.path.join(repodir, repohash)
+
+    # if caching is enabled but we haven't cached something yet
+    if repodir and not os.path.isdir(repodir):
+        repodir = tempfile.mkdtemp(dir=os.path.join(repocachedir, 'incoming'))
+
+    if repodir is None:
+        repodir = tempfile.mkdtemp(dir=args.outdir)
         cleanup_dirs.append(repodir)
 
-    clone_dir = fetch_upstream(args.scm, args.url, args.revision, repodir)
 
+    clone_dir = fetch_upstream(args.scm, args.url, args.revision, repodir)
 
     if args.filename:
         dstname=args.filename
@@ -336,7 +401,7 @@ if __name__ == '__main__':
         dstname=os.path.basename(clone_dir)
 
     version = args.version
-    if version == '_auto_':
+    if version == '_auto_' or args.versionformat:
         version = detect_version(args.scm, clone_dir, args.versionformat)
     if version:
         dstname=dstname + '-' + version
@@ -352,3 +417,12 @@ if __name__ == '__main__':
     create_tar(tar_dir, args.outdir,
                dstname=dstname, extension=args.extension,
                exclude=args.exclude, include=args.include)
+
+    # Populate cache
+    if repocachedir and os.path.isdir(os.path.join(repocachedir, 'repo')):
+        repodir2 = os.path.join(repocachedir, 'repo')
+        repodir2 = os.path.join(repodir2, repohash)
+        if repodir2 and not os.path.isdir(repodir2):
+            os.rename(repodir, repodir2)
+        elif not os.path.samefile(repodir, repodir2):
+            cleanup_dirs.append(repodir)
