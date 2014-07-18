@@ -21,26 +21,32 @@ def fetch_upstream_git(url, clone_dir, revision):
     return commands
 
 def fetch_upstream_svn(url, clone_dir, revision):
-    command = [ ['svn', 'checkout', '--non-interactive', url, clone_dir] ]
+    commands = [
+        ['svn', 'checkout', '--non-interactive', url, clone_dir]
+    ]
     if revision:
-        command[0].insert(4, '-r%s' % revision)
-    return command
+        commands[0].insert(4, '-r%s' % revision)
+    return commands
 
 def fetch_upstream_hg(url, clone_dir, revision):
-    command = [ ['hg', 'clone', url, clone_dir] ]
-    return command
+    commands = [
+        ['hg', 'clone', url, clone_dir]
+    ]
+    return commands
 
 def fetch_upstream_bzr(url, clone_dir, revision):
-    command = [ ['bzr', 'checkout', url, clone_dir] ]
+    commands = [
+        ['bzr', 'checkout', url, clone_dir]
+    ]
     if revision:
-        command[0].insert(3, '-r')
-        command[0].insert(4, revision)
-    return command
+        commands[0].insert(3, '-r')
+        commands[0].insert(4, revision)
+    return commands
 
 fetch_upstream_commands = {
     'git': fetch_upstream_git,
     'svn': fetch_upstream_svn,
-    'hg': fetch_upstream_hg,
+    'hg':  fetch_upstream_hg,
     'bzr': fetch_upstream_bzr,
 }
 
@@ -65,6 +71,12 @@ def update_cache_svn(url, clone_dir, revision):
         command.insert(3, "-r%s" % revision)
     return command
 
+update_cache_commands = {
+    'git': update_cache_git,
+    'svn': update_cache_svn,
+    'hg':  update_cache_hg,
+    'bzr': update_cache_bzr,
+}
 
 def switch_revision_git(clone_dir, revision):
 
@@ -141,13 +153,6 @@ def fetch_upstream(scm, url, revision, out_dir):
 
     else:
         print "Detected cached repository..."
-
-        update_cache_commands = {
-            'git': update_cache_git,
-            'svn': update_cache_svn,
-            'hg':  update_cache_hg,
-            'bzr': update_cache_bzr,
-        }
 
         cmd = update_cache_commands[scm](url, clone_dir, revision)
         print 'COMMAND: %s' % cmd
