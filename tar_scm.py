@@ -61,8 +61,12 @@ def switch_revision_git(clone_dir, revision):
 
 def switch_revision_hg(clone_dir, revision):
 
-    subprocess.call(['hg', 'update', revision],
-                    shell=False, cwd=clone_dir)
+    if revision is None:
+        revision = 'tip'
+
+    if subprocess.call(['hg', 'update', revision],
+                           shell=False, cwd=clone_dir):
+        sys.exit('%s: No such revision' % revision)
 
 
 def switch_revision_none(clone_dir, revision):
