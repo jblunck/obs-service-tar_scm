@@ -62,27 +62,27 @@ fetch_upstream_commands = {
     'bzr': fetch_upstream_bzr,
 }
 
-def update_cache_bzr(url, clone_dir, revision):
-
-    command = ['bzr', 'update']
-    if revision:
-        command.insert(3, '-r')
-        command.insert(4, revision)
-    safe_run(command, cwd=clone_dir)
-
 def update_cache_git(url, clone_dir, revision):
 
     safe_run(['git', 'fetch'], cwd=clone_dir)
-
-def update_cache_hg(url, clone_dir, revision):
-
-    safe_run(['hg', 'pull'], cwd=clone_dir)
 
 def update_cache_svn(url, clone_dir, revision):
 
     command = ['svn', 'update']
     if revision:
         command.insert(3, "-r%s" % revision)
+    safe_run(command, cwd=clone_dir)
+
+def update_cache_hg(url, clone_dir, revision):
+
+    safe_run(['hg', 'pull'], cwd=clone_dir)
+
+def update_cache_bzr(url, clone_dir, revision):
+
+    command = ['bzr', 'update']
+    if revision:
+        command.insert(3, '-r')
+        command.insert(4, revision)
     safe_run(command, cwd=clone_dir)
 
 update_cache_commands = {
@@ -97,7 +97,6 @@ def switch_revision_git(clone_dir, revision):
     if revision is None:
         revision = 'master'
 
-    # switch_to_revision
     revs = [ x + revision for x in [ 'origin/', '' ]]
     for rev in revs:
         try:
