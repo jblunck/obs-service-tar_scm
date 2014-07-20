@@ -376,7 +376,7 @@ if __name__ == '__main__':
         sys.exit("%s: No such directory" % args.outdir);
 
     if args.history_depth:
-        logging.info("history-depth parameter is obsolete and will be ignored")
+        print "history-depth parameter is obsolete and will be ignored"
 
     FORMAT = "%(message)s"
     logging.basicConfig(format=FORMAT, stream=sys.stderr, level=logging.INFO)
