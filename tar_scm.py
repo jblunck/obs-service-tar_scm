@@ -304,7 +304,11 @@ def get_repocache_hash(scm, url, subdir):
         m.update('/' + subdir)
     return m.hexdigest()
 
-def detect_changes_revision(url, srcdir, outdir):
+def read_changes_revision(url, srcdir, outdir):
+    """Reads the _servicedata file and returns a dictionary with 'revision' on
+    success. As a side-effect it creates the _servicedata file if it doesn't
+    exist. 'revision' is None in that case.
+    """
 
     change = {
         'revision': None,
@@ -454,7 +458,7 @@ def detect_changes_commands_git(repodir, changes):
 def detect_changes(scm, url, repodir, outdir):
 
     try:
-        changes = detect_changes_revision(url, outdir, outdir)
+        changes = read_changes_revision(url, os.getcwd(), outdir)
     except Exception, e:
         sys.exit("_servicedata: Failed to parse (%s)" % e)
 
