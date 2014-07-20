@@ -239,42 +239,26 @@ def detect_version_git(repodir, versionformat):
         versionformat = '%ct'
 
     if re.match('.*@PARENT_TAG@.*', versionformat):
-        cmd = [ 'git', 'describe', '--tags', '--abbrev=0' ]
-        proc = subprocess.Popen(cmd,
-                                shell=False,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT,
-                                cwd=repodir)
-        proc.wait()
-        if proc.returncode != 0:
+        try:
+            p = safe_run(['git', 'describe', '--tags', '--abbrev=0'], repodir)
+            versionformat = re.sub('@PARENT_TAG@', p[1],
+                                   versionformat)
+        except SystemExit:
             sys.exit('\e[0;31mThe git repository has no tags, thus @PARENT_TAG@ can not be expanded\e[0m')
 
-        versionformat = re.sub('@PARENT_TAG@', proc.stdout.read().strip(), versionformat)
-
-    cmd = [ 'git', 'log', '-n1', '--date=short',
-            "--pretty=format:%s" % versionformat ]
-    proc = subprocess.Popen(cmd,
-                            shell=False,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            cwd=repodir)
-    proc.wait()
-    return version_iso_cleanup(proc.stdout.read().strip())
+    version = safe_run(['git', 'log', '-n1', '--date=short',
+                        "--pretty=format:%s" % versionformat ], repodir)[1]
+    return version_iso_cleanup(version)
 
 def detect_version_svn(repodir, versionformat):
 
     if versionformat is None:
         versionformat = '%r'
 
-    cmd = [ 'svn', 'info' ]
-    proc = subprocess.Popen(cmd,
-                            shell=False,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            cwd=repodir)
-    proc.wait()
+    svn_info = safe_run([ 'svn', 'info' ], repodir)[1]
+
     version = ''
-    m = re.search('Last Changed Rev: (.*)', proc.stdout.read(), re.MULTILINE)
+    m = re.search('Last Changed Rev: (.*)', svn_info, re.MULTILINE)
     if m:
         version = m.group(1).strip()
     return re.sub('%r', version, versionformat)
@@ -284,37 +268,18 @@ def detect_version_hg(repodir, versionformat):
     if versionformat is None:
         versionformat = '{rev}'
 
-    cmd = [ 'hg', 'id', '-n',  ]
-    proc = subprocess.Popen(cmd,
-                            shell=False,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            cwd=repodir)
-    proc.wait()
-    version = proc.stdout.read().strip()
+    version = safe_run([ 'hg', 'id', '-n',  ], repodir)[1]
 
-    cmd = [ 'hg', 'log', '-l1', "-r%s" % version, '--template', versionformat ]
-    proc = subprocess.Popen(cmd,
-                            shell=False,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            cwd=repodir)
-    proc.wait()
-    return version_iso_cleanup(proc.stdout.read().strip())
+    version = safe_run([ 'hg', 'log', '-l1', "-r%s" % version, '--template',
+                         versionformat ], repodir)[1]
+    return version_iso_cleanup(version)
 
 def detect_version_bzr(repodir, versionformat):
 
     if versionformat is None:
         versionformat = '%r'
 
-    cmd = [ 'bzr', 'revno' ]
-    proc = subprocess.Popen(cmd,
-                            shell=False,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT,
-                            cwd=repodir)
-    proc.wait()
-    version = proc.stdout.read().strip()
+    version = safe_run([ 'bzr', 'revno' ], repodir)[1]
     return re.sub('%r', version, versionformat)
 
 def detect_version(scm, repodir, versionformat=None):
