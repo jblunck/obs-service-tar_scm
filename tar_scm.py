@@ -12,6 +12,7 @@ import subprocess
 import atexit
 import hashlib
 import tempfile
+import logging
 
 def fetch_upstream_git(url, clone_dir, revision):
     commands = [
@@ -134,7 +135,7 @@ def fetch_upstream(scm, url, revision, out_dir):
         os.mkdir(clone_dir)
 
         cmds = fetch_upstream_commands[scm](url, clone_dir, revision)
-        print "CMD: %s" % cmds[0]
+        logging.debug("CMD: %s" % cmds[0])
         proc = subprocess.Popen(cmds[0],
                                 shell=False,
                                 stdout=subprocess.PIPE,
@@ -143,7 +144,7 @@ def fetch_upstream(scm, url, revision, out_dir):
         proc.wait()
         cmds.pop(0)
         for cmd in cmds:
-            print "CMD: %s" % cmd
+            logging.debug("CMD: %s" % cmd)
             proc = subprocess.Popen(cmd,
                                     shell=False,
                                     stdout=subprocess.PIPE,
@@ -152,17 +153,17 @@ def fetch_upstream(scm, url, revision, out_dir):
             proc.wait()
 
     else:
-        print "Detected cached repository..."
+        logging.info("Detected cached repository...")
 
         cmd = update_cache_commands[scm](url, clone_dir, revision)
-        print 'COMMAND: %s' % cmd
+        logging.debug('COMMAND: %s' % cmd)
         proc = subprocess.Popen(cmd,
                                 shell=False,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.STDOUT,
                                 cwd=clone_dir)
         proc.wait()
-        print 'STDOUT: %s' % proc.stdout.read()
+        logging.debug('STDOUT: %s' % proc.stdout.read())
 
 
     # switch_to_revision
@@ -232,7 +233,7 @@ cleanup_dirs = []
 
 def cleanup(dirs):
 
-    print "Cleaning: %s" % ' '.join(dirs)
+    logging.info("Cleaning: %s" % ' '.join(dirs))
     for d in dirs:
         if not os.path.exists(d):
             continue
@@ -343,7 +344,7 @@ def detect_version(scm, repodir, versionformat=None):
     }
 
     version = detect_version_commands[scm](repodir, versionformat)
-    print "VERSION(auto): %s" % version
+    logging.debug("VERSION(auto): %s" % version)
     return version
 
 def get_repocache_hash(scm, url, subdir):
@@ -362,6 +363,8 @@ if __name__ == '__main__':
                         help='upstream tarball URL to download')
     parser.add_argument('--outdir', required=True,
                         help='osc service parameter that does nothing')
+    parser.add_argument('--verbose', '-v', action='store_true', default=False,
+                        help='enable verbose output')
     parser.add_argument('--version', default='_auto_',
                         help='Specify version to be used in tarball. Defaults to automatically detected value formatted by versionformat parameter.')
     parser.add_argument('--versionformat',
@@ -390,7 +393,12 @@ if __name__ == '__main__':
         sys.exit("%s: No such directory" % args.outdir);
 
     if args.history_depth:
-        print "history-depth parameter is obsolete and will be ignored"
+        logging.info("history-depth parameter is obsolete and will be ignored")
+
+    FORMAT = "%(message)s"
+    logging.basicConfig(format=FORMAT, stream=sys.stderr, level=logging.INFO)
+    if args.verbose:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     # force cleaning of our workspace on exit
     atexit.register(cleanup, cleanup_dirs)
@@ -402,7 +410,7 @@ if __name__ == '__main__':
     repodir = None
     if repocachedir and os.path.isdir(os.path.join(repocachedir, 'repo')):
         repohash = get_repocache_hash(args.scm, args.url, args.subdir)
-        print "HASH: %s" % repohash
+        logging.debug("HASH: %s" % repohash)
         repodir = os.path.join(repocachedir, 'repo')
         repodir = os.path.join(repodir, repohash)
 
@@ -428,7 +436,7 @@ if __name__ == '__main__':
     if version:
         dstname=dstname + '-' + version
 
-    print "DST: %s" % dstname
+    logging.debug("DST: %s" % dstname)
 
     # detect_changes
 
