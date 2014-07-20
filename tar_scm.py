@@ -48,6 +48,7 @@ def fetch_upstream_hg(url, clone_dir, revision, cwd):
     safe_run(['hg', 'clone', url, clone_dir], cwd)
 
 def fetch_upstream_bzr(url, clone_dir, revision, cwd):
+
     command = ['bzr', 'checkout', url, clone_dir]
     if revision:
         command.insert(3, '-r')
@@ -102,8 +103,8 @@ def switch_revision_git(clone_dir, revision):
         try:
             safe_run(['git', 'rev-parse', '--verify', '--quiet', rev],
                      cwd=clone_dir)
-            p = safe_run(['git', 'reset', '--hard', rev], cwd=clone_dir)
-            logging.info(p[1])
+            p = safe_run(['git', 'reset', '--hard', rev], cwd=clone_dir)[1]
+            logging.info(p)
             break
         except SystemExit:
             continue
@@ -240,9 +241,9 @@ def detect_version_git(repodir, versionformat):
 
     if re.match('.*@PARENT_TAG@.*', versionformat):
         try:
-            p = safe_run(['git', 'describe', '--tags', '--abbrev=0'], repodir)
-            versionformat = re.sub('@PARENT_TAG@', p[1],
-                                   versionformat)
+            p = safe_run(['git', 'describe', '--tags', '--abbrev=0'],
+                         repodir)[1]
+            versionformat = re.sub('@PARENT_TAG@', p, versionformat)
         except SystemExit:
             sys.exit('\e[0;31mThe git repository has no tags, thus @PARENT_TAG@ can not be expanded\e[0m')
 
