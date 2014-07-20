@@ -13,6 +13,7 @@ import atexit
 import hashlib
 import tempfile
 import logging
+import glob
 
 def safe_run(cmd, cwd):
 
@@ -305,7 +306,10 @@ def get_repocache_hash(scm, url, subdir):
 
 def detect_changes_revision(url, srcdir, outdir):
 
-    changerev = None
+    change = {
+        'revision': None,
+        'url': url,
+    }
 
     try:
         # If lxml is available, we can use a parser that doesnt destroy comments
@@ -331,7 +335,7 @@ def detect_changes_revision(url, srcdir, outdir):
             params = tar_scm_service.findall("param[@name='changesrevision']")
             if len(params) == 1:
                 # Found what we searched for!
-                changerev = params[0].text
+                change['revision'] = params[0].text
         else:
             # File exists, is well-formed but does not contain the service we search
             root.append(ET.fromstring(tar_scm_xmlstring))
@@ -357,32 +361,100 @@ def detect_changes_revision(url, srcdir, outdir):
             shutil.copy(os.path.join(srcdir, "_servicedata"),
                         os.path.join(outdir, "_servicedata"))
 
-    return changerev
+    return change
 
+def write_changes_revision(url, outdir, revision):
 
-def detect_changes_commands_git(repodir, changesrev):
+    logging.debug("Updating %s" % os.path.join(outdir, '_servicedata'))
 
-    if changesrev is None:
-        changesrev = safe_run(['git', 'log', '-n1', '--pretty=format:%H',
+    try:
+        # If lxml is available, we can use a parser that doesn't destroy comments
+        import lxml.etree as ET
+        xml_parser = ET.XMLParser(remove_comments=False)
+    except ImportError:
+        import xml.etree.ElementTree as ET
+        xml_parser = None
+
+    tree = ET.parse(os.path.join(outdir, "_servicedata"), parser=xml_parser)
+    root = tree.getroot()
+    changed, tar_scm_service = False, None
+    for service in root.findall("service[@name='tar_scm']"):
+        for param in service.findall("param[@name='url']"):
+            if param.text == url:
+                tar_scm_service = service
+                break
+    if tar_scm_service is not None:
+        changerev_params = tar_scm_service.findall("param[@name='changesrevision']")
+        if len(changerev_params) == 1:  # already present, just update
+            if changerev_params[0].text != revision:
+                changerev_params[0].text = revision
+                changed = True
+        else:  # not present, add changesrevision element
+            tar_scm_service.append(ET.fromstring("    <param name=\"changesrevision\">%s</param>\n" % revision))
+            changed = True
+        if changed:
+            tree.write(os.path.join(outdir, "_servicedata"))
+    else:
+        sys.exit("File _servicedata is missing tar_scm with URL '%s'" % url)
+
+def write_changes(filename, changes, version, author):
+
+    if changes is None:
+        return
+
+    if author is None:
+        author = 'opensuse-packaging@opensuse.org'
+    logging.debug("AUTHOR: %s" % author)
+
+    logging.debug("Writing changes file " + filename)
+
+    f = tempfile.NamedTemporaryFile(delete=False)
+    f.write('-------------------------------------------------------------------\n')
+    f.write("%s - %s\n" % (
+        datetime.datetime.utcnow().strftime('%a %b %d %H:%M:%S UTC %Y'),
+        author ))
+    f.write('\n')
+    f.write("- Update to version %s:\n" % version)
+    for line in changes.split(os.linesep):
+        f.write(" + %s\n" % line)
+    f.write('\n')
+
+    old_f = open(filename, 'r')
+    f.write(old_f.read())
+    old_f.close()
+
+    f.close()
+
+    os.rename(f.name, filename)
+
+def detect_changes_commands_git(repodir, changes):
+
+    last_rev = changes['revision']
+
+    if last_rev is None:
+        last_rev = safe_run(['git', 'log', '-n1', '--pretty=format:%H',
                                '--skip=10'], cwd=repodir)[1]
-    currentrev = safe_run(['git', 'log', '-n1', '--pretty=format:%H'],
+    current_rev = safe_run(['git', 'log', '-n1', '--pretty=format:%H'],
                           cwd=repodir)[1]
 
-    if changesrev == currentrev:
+    if last_rev == current_rev:
         logging.debug("No new commits, skipping changes file generation")
         return
 
     logging.debug("Generating changes between %s and %s" %
-                  ( changesrev , currentrev ))
+                  ( last_rev , current_rev ))
 
     lines=safe_run(['git', 'log', '--no-merges', '--pretty=tformat:%s',
-                    "%s..%s" % ( changesrev , currentrev )], repodir)[1]
-    return '\n'.join(reversed(lines.split('\n')))
+                    "%s..%s" % ( last_rev , current_rev )], repodir)[1]
+
+    changes['revision'] = current_rev
+    changes['lines'] = '\n'.join(reversed(lines.split('\n')))
+    return changes
 
 def detect_changes(scm, url, repodir, outdir):
 
     try:
-        changesrev = detect_changes_revision(url, outdir, outdir)
+        changes = detect_changes_revision(url, outdir, outdir)
     except Exception, e:
         sys.exit("_servicedata: Failed to parse (%s)" % e)
 
@@ -390,7 +462,7 @@ def detect_changes(scm, url, repodir, outdir):
         'git': detect_changes_commands_git,
     }
 
-    return detect_changes_commands[scm](repodir, changesrev)
+    return detect_changes_commands[scm](repodir, changes)
 
 
 if __name__ == '__main__':
@@ -408,6 +480,8 @@ if __name__ == '__main__':
     parser.add_argument('--versionformat',
                         help='Auto-generate version from checked out source using this format string.  This parameter is used if the \'version\' parameter is not specified.')
     parser.add_argument('--changesgenerate', action='store_true', default=False,
+                        help='osc service parameter that does nothing')
+    parser.add_argument('--changesauthor',
                         help='osc service parameter that does nothing')
     parser.add_argument('--filename',
                         help='name of package - used together with version to determine tarball name')
@@ -478,10 +552,9 @@ if __name__ == '__main__':
 
     logging.debug("DST: %s" % dstname)
 
-    changes_lines = None
+    changes = None
     if args.changesgenerate:
-        changes_lines = detect_changes(args.scm, args.url, clone_dir,
-                                       args.outdir)
+        changes = detect_changes(args.scm, args.url, clone_dir, args.outdir)
 
     tar_dir = prep_tree_for_tar(clone_dir, args.subdir, args.outdir,
                                 dstname=dstname)
@@ -491,7 +564,11 @@ if __name__ == '__main__':
                dstname=dstname, extension=args.extension,
                exclude=args.exclude, include=args.include)
 
-    #write_changes(args.outdir, changes_lines)
+    if changes:
+        for filename in glob.glob(os.path.join(args.outdir, '*.changes')):
+            write_changes(filename, changes['lines'], version,
+                          args.changesauthor)
+        write_changes_revision(changes['url'], args.outdir, changes['revision'])
 
     # Populate cache
     if repocachedir and os.path.isdir(os.path.join(repocachedir, 'repo')):
