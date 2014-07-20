@@ -303,6 +303,96 @@ def get_repocache_hash(scm, url, subdir):
         m.update('/' + subdir)
     return m.hexdigest()
 
+def detect_changes_revision(url, srcdir, outdir):
+
+    changerev = None
+
+    try:
+        # If lxml is available, we can use a parser that doesnt destroy comments
+        import lxml.etree as ET
+        xml_parser = ET.XMLParser(remove_comments=False)
+    except ImportError:
+        import xml.etree.ElementTree as ET
+        xml_parser = None
+
+    create_servicedata, tar_scm_service = False, None
+    tar_scm_xmlstring = "  <service name=\"tar_scm\">\n    <param name=\"url\">%s</param>\n  </service>\n" % url
+    root=None
+    try:
+        tree = ET.parse(os.path.join(srcdir, "_servicedata"),
+                        parser=xml_parser)
+        root = tree.getroot()
+        for service in root.findall("service[@name='tar_scm']"):
+            for param in service.findall("param[@name='url']"):
+                if param.text == url:
+                    tar_scm_service = service
+                    break
+        if tar_scm_service is not None:
+            params = tar_scm_service.findall("param[@name='changesrevision']")
+            if len(params) == 1:
+                # Found what we searched for!
+                changerev = params[0].text
+        else:
+            # File exists, is well-formed but does not contain the service we search
+            root.append(ET.fromstring(tar_scm_xmlstring))
+            create_servicedata = True
+    except IOError as e:
+        # File doesnt exist
+        root = ET.fromstring("<servicedata>\n%s</servicedata>\n" % tar_scm_xmlstring)
+        create_servicedata = True
+    except ET.ParseError as e:
+        if e.message.startswith("Document is empty"):
+            # File is empty
+            root = ET.fromstring("<servicedata>\n%s</servicedata>\n" % tar_scm_xmlstring)
+            create_servicedata = True
+        else:
+            # File is corrupt
+            raise
+
+    if create_servicedata:
+        ET.ElementTree(root).write(os.path.join(outdir, "_servicedata"))
+    else:
+        if not os.path.samefile(os.path.join(srcdir, "_servicedata"),
+                                os.path.join(outdir, "_servicedata")):
+            shutil.copy(os.path.join(srcdir, "_servicedata"),
+                        os.path.join(outdir, "_servicedata"))
+
+    return changerev
+
+
+def detect_changes_commands_git(repodir, changesrev):
+
+    if changesrev is None:
+        changesrev = safe_run(['git', 'log', '-n1', '--pretty=format:%H',
+                               '--skip=10'], cwd=repodir)[1]
+    currentrev = safe_run(['git', 'log', '-n1', '--pretty=format:%H'],
+                          cwd=repodir)[1]
+
+    if changesrev == currentrev:
+        logging.debug("No new commits, skipping changes file generation")
+        return
+
+    logging.debug("Generating changes between %s and %s" %
+                  ( changesrev , currentrev ))
+
+    lines=safe_run(['git', 'log', '--no-merges', '--pretty=tformat:%s',
+                    "%s..%s" % ( changesrev , currentrev )], repodir)[1]
+    return '\n'.join(reversed(lines.split('\n')))
+
+def detect_changes(scm, url, repodir, outdir):
+
+    try:
+        changesrev = detect_changes_revision(url, outdir, outdir)
+    except Exception, e:
+        sys.exit("_servicedata: Failed to parse (%s)" % e)
+
+    detect_changes_commands = {
+        'git': detect_changes_commands_git,
+    }
+
+    return detect_changes_commands[scm](repodir, changesrev)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Git Tarballs')
     parser.add_argument('--scm', required=True,
@@ -317,6 +407,8 @@ if __name__ == '__main__':
                         help='Specify version to be used in tarball. Defaults to automatically detected value formatted by versionformat parameter.')
     parser.add_argument('--versionformat',
                         help='Auto-generate version from checked out source using this format string.  This parameter is used if the \'version\' parameter is not specified.')
+    parser.add_argument('--changesgenerate', action='store_true', default=False,
+                        help='osc service parameter that does nothing')
     parser.add_argument('--filename',
                         help='name of package - used together with version to determine tarball name')
     parser.add_argument('--extension', default='tar',
@@ -386,7 +478,10 @@ if __name__ == '__main__':
 
     logging.debug("DST: %s" % dstname)
 
-    # detect_changes
+    changes_lines = None
+    if args.changesgenerate:
+        changes_lines = detect_changes(args.scm, args.url, clone_dir,
+                                       args.outdir)
 
     tar_dir = prep_tree_for_tar(clone_dir, args.subdir, args.outdir,
                                 dstname=dstname)
@@ -395,6 +490,8 @@ if __name__ == '__main__':
     create_tar(tar_dir, args.outdir,
                dstname=dstname, extension=args.extension,
                exclude=args.exclude, include=args.include)
+
+    #write_changes(args.outdir, changes_lines)
 
     # Populate cache
     if repocachedir and os.path.isdir(os.path.join(repocachedir, 'repo')):
