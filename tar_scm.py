@@ -14,6 +14,23 @@ import hashlib
 import tempfile
 import logging
 
+def safe_run(cmd, cwd):
+
+    logging.debug("COMMAND: %s" % cmd)
+    proc = subprocess.Popen(cmd,
+                            shell=False,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT,
+                            cwd=cwd)
+    proc.wait()
+    output = proc.stdout.read().strip()
+    if proc.returncode:
+        logging.info("ERROR(%d): %s" % ( proc.returncode, output ))
+        sys.exit("Command failed; aborting!")
+    else:
+        logging.debug("RESULT(%d): %s" % ( proc.returncode, output ))
+    return (proc.returncode, output)
+
 def fetch_upstream_git(url, clone_dir, revision):
     commands = [
         ['git', 'clone', url, clone_dir],
@@ -87,20 +104,18 @@ def switch_revision_git(clone_dir, revision):
     # switch_to_revision
     revs = [ x + revision for x in [ 'origin/', '' ]]
     for rev in revs:
-        if not subprocess.call(['git', 'rev-parse', '--verify', '--quiet', rev],
-                               shell=False,
-                               stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT,
-                               cwd=clone_dir):
-            # we want to see the output so do not pass stdout/stderr
-            subprocess.call(['git', 'reset', '--hard', rev],
-                            shell=False, cwd=clone_dir)
+        try:
+            safe_run(['git', 'rev-parse', '--verify', '--quiet', rev],
+                     cwd=clone_dir)
+            p = safe_run(['git', 'reset', '--hard', rev], cwd=clone_dir)
+            logging.info(p[1])
             break
+        except SystemExit:
+            continue
     else:
         sys.exit('%s: No such revision' % revision)
 
-    subprocess.call(['git', 'submodule', 'update', '--recursive'],
-                    shell=False, cwd=clone_dir)
+    safe_run(['git', 'submodule', 'update', '--recursive'], cwd=clone_dir)
 
 
 def switch_revision_hg(clone_dir, revision):
@@ -108,8 +123,9 @@ def switch_revision_hg(clone_dir, revision):
     if revision is None:
         revision = 'tip'
 
-    if subprocess.call(['hg', 'update', revision],
-                           shell=False, cwd=clone_dir):
+    try:
+        safe_run(['hg', 'update', revision], cwd=clone_dir)
+    except SystemExit:
         sys.exit('%s: No such revision' % revision)
 
 
