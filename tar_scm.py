@@ -31,35 +31,28 @@ def safe_run(cmd, cwd):
         logging.debug("RESULT(%d): %s" % ( proc.returncode, output ))
     return (proc.returncode, output)
 
-def fetch_upstream_git(url, clone_dir, revision):
-    commands = [
-        ['git', 'clone', url, clone_dir],
-        ['git', 'submodule', 'update', '--init', '--recursive'],
-    ]
-    return commands
+def fetch_upstream_git(url, clone_dir, revision, cwd):
 
-def fetch_upstream_svn(url, clone_dir, revision):
-    commands = [
-        ['svn', 'checkout', '--non-interactive', url, clone_dir]
-    ]
+    safe_run(['git', 'clone', url, clone_dir], cwd=cwd)
+    safe_run(['git', 'submodule', 'update', '--init', '--recursive'], clone_dir)
+
+def fetch_upstream_svn(url, clone_dir, revision, cwd):
+
+    command = ['svn', 'checkout', '--non-interactive', url, clone_dir]
     if revision:
-        commands[0].insert(4, '-r%s' % revision)
-    return commands
+        command.insert(4, '-r%s' % revision)
+    safe_run(command, cwd)
 
-def fetch_upstream_hg(url, clone_dir, revision):
-    commands = [
-        ['hg', 'clone', url, clone_dir]
-    ]
-    return commands
+def fetch_upstream_hg(url, clone_dir, revision, cwd):
 
-def fetch_upstream_bzr(url, clone_dir, revision):
-    commands = [
-        ['bzr', 'checkout', url, clone_dir]
-    ]
+    safe_run(['hg', 'clone', url, clone_dir], cwd)
+
+def fetch_upstream_bzr(url, clone_dir, revision, cwd):
+    command = ['bzr', 'checkout', url, clone_dir]
     if revision:
-        commands[0].insert(3, '-r')
-        commands[0].insert(4, revision)
-    return commands
+        command.insert(3, '-r')
+        command.insert(4, revision)
+    safe_run(command, cwd)
 
 fetch_upstream_commands = {
     'git': fetch_upstream_git,
@@ -69,25 +62,27 @@ fetch_upstream_commands = {
 }
 
 def update_cache_bzr(url, clone_dir, revision):
+
     command = ['bzr', 'update']
     if revision:
         command.insert(3, '-r')
         command.insert(4, revision)
-    return command
+    safe_run(command, cwd=clone_dir)
 
 def update_cache_git(url, clone_dir, revision):
-    command = ['git', 'fetch']
-    return command
+
+    safe_run(['git', 'fetch'], cwd=clone_dir)
 
 def update_cache_hg(url, clone_dir, revision):
-    command = ['hg', 'pull']
-    return command
+
+    safe_run(['hg', 'pull'], cwd=clone_dir)
 
 def update_cache_svn(url, clone_dir, revision):
+
     command = ['svn', 'update']
     if revision:
         command.insert(3, "-r%s" % revision)
-    return command
+    safe_run(command, cwd=clone_dir)
 
 update_cache_commands = {
     'git': update_cache_git,
@@ -149,38 +144,10 @@ def fetch_upstream(scm, url, revision, out_dir):
     if not os.path.isdir(clone_dir):
         # initial clone
         os.mkdir(clone_dir)
-
-        cmds = fetch_upstream_commands[scm](url, clone_dir, revision)
-        logging.debug("CMD: %s" % cmds[0])
-        proc = subprocess.Popen(cmds[0],
-                                shell=False,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT,
-                                cwd=out_dir)
-        proc.wait()
-        cmds.pop(0)
-        for cmd in cmds:
-            logging.debug("CMD: %s" % cmd)
-            proc = subprocess.Popen(cmd,
-                                    shell=False,
-                                    stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT,
-                                    cwd=clone_dir)
-            proc.wait()
-
+        fetch_upstream_commands[scm](url, clone_dir, revision, cwd=out_dir)
     else:
         logging.info("Detected cached repository...")
-
-        cmd = update_cache_commands[scm](url, clone_dir, revision)
-        logging.debug('COMMAND: %s' % cmd)
-        proc = subprocess.Popen(cmd,
-                                shell=False,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT,
-                                cwd=clone_dir)
-        proc.wait()
-        logging.debug('STDOUT: %s' % proc.stdout.read())
-
+        update_cache_commands[scm](url, clone_dir, revision)
 
     # switch_to_revision
     switch_revision_commands[scm](clone_dir, revision)
